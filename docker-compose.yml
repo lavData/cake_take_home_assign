@@ -1,0 +1,16 @@
+version: '3'
+services:
+  sftp:
+    image: atmoz/sftp
+    privileged: true
+    cap_add:
+      - SYS_ADMIN
+    volumes:
+      - ./ssh_host_ed25519_key:/etc/ssh/ssh_host_ed25519_key
+      - ./ssh_host_rsa_key:/etc/ssh/ssh_host_rsa_key
+    ports:
+      - "2222:22"
+    command: source:src:::upload destination:dst:::download
+    # create file /etc/sftp.d
+
+
