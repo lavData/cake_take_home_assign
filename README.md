@@ -19,7 +19,7 @@ ssh-keygen -t rsa -b 4096 -f ssh_host_rsa_key < /dev/null
 
 ### 2. Docker compose
 ```bash
-docker-compose up
+docker-compose up -d
 ```
 
 ### 3. Run Sftp_sync dag
@@ -49,10 +49,12 @@ This design is simple, I have 3 tasks:
 2. Execute ETL workflow
 3. Update the last modified time in the database as state, use this state in the next run
 
-It has advantages is idempotent, but it required to manage state properly.
+It offers incremental sync feature, but it required to manage state properly.
 
 ### 3. The abstraction
-Source or Destination not only SFTP server, it can be any storage file  like GCS, AWS S3, etc. So I have to define the interface for the source and destination. 
+Source or Destination are not only SFTP servers, they can be any file storages like GCS, AWS S3, etc. So I have to define the interface for the source and destination. 
+
+For example, the source interface is defined as below:
 ```python
 class Source:
   def get_files(self, path):
