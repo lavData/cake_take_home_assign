@@ -1,24 +1,27 @@
-from airflow import DAG
-from enum import Enum
+import datetime
 import os
-from airflow.providers.sftp.hooks.sftp import SFTPHook
-from airflow.providers.sftp.sensors.sftp import SFTPSensor
-from airflow.operators.python import PythonOperator
-from datetime import datetime, timedelta
+import logging
+import psycopg2
+from enum import Enum
 from typing import Iterator
 from urllib.parse import urlparse
-import psycopg2
+from datetime import timedelta
 
+from airflow import DAG
+from airflow.operators.python import PythonOperator
+from airflow.providers.sftp.hooks.sftp import SFTPHook
+from airflow.providers.sftp.sensors.sftp import SFTPSensor
+
+DEST_SFTP_CONNECTION_ID = "my_dest_sftp_ssh_conn"
+SOURCE_SFTP_CONNECTION_ID = "my_source_sftp_ssh_conn"
+STATE_TABLE_NAME = os.environ["SFTP_SYNC_STATE_TABLE"]
 URI = os.environ["AIRFLOW__DATABASE__SQL_ALCHEMY_CONN"]
 STATE_SCHEMA_NAME = os.environ["SFTP_SYNC_STATE_SCHEMA"]
-STATE_TABLE_NAME = os.environ["SFTP_SYNC_STATE_TABLE"]
-SOURCE_SFTP_CONNECTION_ID = "my_source_sftp_ssh_conn"
-DEST_SFTP_CONNECTION_ID = "my_dest_sftp_ssh_conn"
 
 default_args = {
     "owner": "airflow",
     "depends_on_past": True,
-    "start_date": datetime(2024, 4, 24),
+    "start_date": datetime.datetime.today(),
     "email_on_failure": False,
     "email_on_retry": False,
     "retries": 1,
@@ -29,11 +32,16 @@ dag = DAG(
     "sftp_sync",
     default_args=default_args,
     description="Sync files from source SFTP to target SFTP",
-    schedule_interval=timedelta(days=1),
+    schedule_interval=timedelta(minutes=3),
 )
 
 
 class Transformer:
+    """
+    Base class for all transformers.
+    If you want any custom transformer, you can inherit this class
+    """
+
     def transform(self, payload):
         raise NotImplementedError
 
@@ -54,7 +62,7 @@ class NoOpTransformer(Transformer):
         return payload
 
 
-class Postgres:
+class Postgre:
     def __init__(self, uri, **kwargs):
         uri_parsed = urlparse(uri)
         password = uri_parsed.password
@@ -62,15 +70,30 @@ class Postgres:
         hostname = uri_parsed.hostname
         port = uri_parsed.port if uri_parsed.port else 5432
 
-        self.conn = psycopg2.connect(
-            database=database,
-            user=uri_parsed.username,
-            password=password,
-            host=hostname,
-            port=port,
-            options=f"-c search_path={STATE_SCHEMA_NAME}",
-        )
+        try:
+            self.conn = psycopg2.connect(
+                database=database,
+                user=uri_parsed.username,
+                password=password,
+                host=hostname,
+                port=port,
+                options=f"-c search_path={STATE_SCHEMA_NAME}",
+            )
+        except psycopg2.Error as e:
+            logging.error(f"Failed to connect to PostgreSQL: {e}")
+            raise e
+
         self.cursor = self.conn.cursor()
+
+        # Init state schema
+        self.cursor.execute(f"CREATE SCHEMA IF NOT EXISTS {STATE_SCHEMA_NAME};")
+        # Init state table
+        self.cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {STATE_SCHEMA_NAME}.{STATE_TABLE_NAME} (
+                type_hook TEXT NOT NULL PRIMARY KEY,
+                last_sync TEXT NOT NULL);
+                """
+        )
 
     def __enter__(self):
         return self
@@ -86,10 +109,16 @@ class Postgres:
 
 
 class StateEngine:
+    """
+    StateEngine is a class that manages the state of the sync process.
+    It stores the last sync time for each type of hook.
+    It means that it can store the last sync time for SFTP, S3, etc.
+    """
+
     min_date = "19700101000000"
 
     @classmethod
-    def get_last_sync(cls, db: Postgres, table_name, type_hook: str):
+    def get_last_sync(cls, db: Postgre, table_name, type_hook: str):
         db.cursor.execute(
             f"""
         SELECT last_sync FROM {table_name} WHERE type_hook = '{type_hook}'
@@ -97,11 +126,10 @@ class StateEngine:
         )
         last_sync = db.cursor.fetchone()
         last_sync = str(last_sync[0]) if last_sync else cls.min_date
-
         return last_sync
 
     @classmethod
-    def update_last_sync(cls, db: Postgres, table_name, mod_time, type_hook: str):
+    def update_last_sync(cls, db: Postgre, table_name, mod_time, type_hook: str):
         db.cursor.execute(
             f"""
         INSERT  INTO {table_name}(type_hook, last_sync) VALUES ('{type_hook}', '{mod_time}')
@@ -117,6 +145,11 @@ class TypeHook(Enum):
 
 
 class Source:
+    """
+    Interface for all sources.
+    It defines the methods that all sources should implement.
+    """
+
     conn_id = None
     type_hook: str
 
@@ -169,7 +202,7 @@ class SFTPSource(Source):
     def get_new_files(self, path):
         new_files = []
 
-        with Postgres(uri=URI) as db:
+        with Postgre(uri=URI) as db:
             last_sync = StateEngine.get_last_sync(
                 db, STATE_TABLE_NAME, type_hook=self.type_hook
             )
@@ -180,20 +213,29 @@ class SFTPSource(Source):
                     new_files.append(
                         [file, self.hook.get_mod_time(os.path.join(path, file))]
                     )
-
+        logging.info(
+            f"Dectected new files: {new_files} on path: {path}, last sync: {last_sync}"
+        )
         return new_files
 
     def mark_file_processed(self, file_path):
-        with Postgres(uri=URI) as db:
+        with Postgre(uri=URI) as db:
             StateEngine.update_last_sync(
                 db, STATE_TABLE_NAME, self.hook.get_mod_time(file_path), self.type_hook
             )
+        logging.info(
+            f"Marked file {file_path} as processed at time {self.hook.get_mod_time(file_path)}"
+        )
 
     def close(self):
         self.hook.close_conn()
 
 
 class Destination:
+    """
+    Interface for all destinations.
+    """
+
     conn_id = None
 
     def __init__(self, conn_id, **kwargs):
@@ -218,14 +260,23 @@ class SFTPDestination(Destination):
         with self.hook.get_conn().open(file_path, mode="a") as file:
             file.write(payload)
 
+        logging.info(f"Uploaded file {file_path} successfully")
+
     def upload_chunk_file(self, file_path, payload: Iterator):
         with (
             self.hook.get_conn().open(file_path, mode="a") as file_append,
             self.hook.get_conn().open(file_path, mode="w") as file_write,
         ):
-            file_write.write(next(payload))
-            for chunk in payload:
-                file_append.write(chunk)
+            try:
+                file_write.write(next(payload))
+                for chunk in payload:
+                    file_append.write(chunk)
+            except Exception as e:
+                logging.error(f"Failed to upload file {file_path}: {e}")
+                self.hook.delete_file(file_path)
+                raise e
+
+        logging.info(f"Uploaded file {file_path} successfully")
 
     def close(self):
         self.hook.close_conn()
