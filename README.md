@@ -70,15 +70,15 @@ class Source:
 ```
 
 ### 4. Easily custom transform
-Custom transform is needed in pipline, so I have defined the interface for the transformation  whereas its implementations can be interchangeable
+Custom transformations is needed in pipeline, so I have defined the interface for the transformation  whereas its implementations can be interchangeable
 
 Trade-off: I assume that there is no needed for joining transformation (i.e aggregation between data entities) as SFTP servers usually offer unstructured data, so only on-the-fly transformation is supported
 
 ### 5. Handle abnormal file size
-I have two option to process data from source to destination:
-1. Process as normal:  read all content of file and write to destination
+I have two options to process data from source to destination:
+1. Process as normal:  read all content of files and write to destination
    - Pros: simple, easy to implement
    - Cons: if the file is too large, it can cause memory error
-2. Make a streaming for reading and writing file. I chunk the file into small pieces
-   - Pros: can handle large file
+2. Make a streaming pipelines by chunking single file into small pieces
+   - Pros: can handle large file by saving memory usage.
    - Cons: complex, exception handling , IO pressure.
