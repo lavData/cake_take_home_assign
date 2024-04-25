@@ -37,7 +37,7 @@ Steps:
 - Check the destination SFTP  server (`sftp -oPort=2222 destination@localhost` with password is `dst`,  go to dir `donwload`) to see the file is copied to this server 
 (I schedule to run every 3 minutes so you need to wait a little bit)
 
-**Note:** Connection source and dest SFTP have been created when deploy docker-compose
+**Note:** Source and dest Connections  have been created when deploy docker-compose
 
 ## Explain the pipeline
 
@@ -71,7 +71,7 @@ class Source:
 
 ```
 
-### 4. Easily custom transform
+### 4. Ease custom transformation
 Custom transformations is needed in pipeline, so I have defined the interface for the transformation  whereas its implementations can be interchangeable
 
 Trade-off: I assume that there is no needed for joining transformation (i.e aggregation between data entities) as SFTP servers usually offer unstructured data, so only on-the-fly transformation is supported
