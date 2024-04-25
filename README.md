@@ -32,7 +32,7 @@ Steps:
 - Go to Airflow UI at http://localhost:8080 with username and password is `airflow`
 - Turn and trigger on the `sftp_sync` dag
 - Connect and put file to source SFTP server:
-  -  Run `sftp -oPort=2222 source@localhost` with password is `src`
+  - From the repo project root path, run `sftp -oPort=2222 source@localhost` with password is `src`
   - Cd to `upload` folder and put file 1.txt in my repo to this folder by `put 1.txt` command
 - Check the destination SFTP  server (`sftp -oPort=2222 destination@localhost` with password is `dst`,  go to dir `donwload`) to see the file is copied to this server 
 (I schedule to run every 3 minutes so you need to wait a little bit)
