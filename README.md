@@ -6,7 +6,7 @@ Vu's assignment to build data pipeline to extract data from SFTP servers, transf
 
 ## Deployment 
 
-**Need locate on repo path before run all below commands**
+**Need to be at project's root path before running.**
 
 ### 1. Gen SSH key
 Because I deploy SFTP server on docker, so I need to generate SSH key 
@@ -32,7 +32,7 @@ Steps:
 - Go to Airflow UI at http://localhost:8080 with username and password is `airflow`
 - Turn and trigger on the `sftp_sync` dag
 - Connect and put file to source SFTP server:
-  - From the repo project root path, run `sftp -oPort=2222 source@localhost` with password is `src`
+  - From the repo project's root path, run `sftp -oPort=2222 source@localhost` with password is `src`
   - Cd to `upload` folder and put file 1.txt in my repo to this folder by `put 1.txt` command
 - Check the destination SFTP  server (`sftp -oPort=2222 destination@localhost` with password is `dst`,  go to dir `donwload`) to see the file is copied to this server 
 (I schedule to run every 3 minutes so you need to wait a little bit)
@@ -52,7 +52,7 @@ This design is simple, I have 3 tasks:
 It offers incremental sync feature, but it required to manage state properly.
 
 ### 3. The abstraction
-Source or Destination are not only SFTP servers, they can be any file storages like GCS, AWS S3, etc. So I have to define the interface for the source and destination. 
+Source or Destination are not only SFTP servers, they can be any file storage like GCS, AWS S3, etc. So I have to define the interface for the source and destination. 
 
 For example, the source interface is defined as below:
 ```python
@@ -71,16 +71,16 @@ class Source:
 
 ```
 
-### 4. Ease custom transformation
+### 4. Easy custom transformation
 Custom transformations is needed in pipeline, so I have defined the interface for the transformation  whereas its implementations can be interchangeable
 
-Trade-off: I assume that there is no needed for joining transformation (i.e aggregation between data entities) as SFTP servers usually offer unstructured data, so only on-the-fly transformation is supported
+Trade-off: I assume that there is no need for joining transformation (i.e aggregation between data entities) as SFTP servers usually offer unstructured data, so only on-the-fly transformation is supported
 
 ### 5. Handle abnormal file size
 I have two options to process data from source to destination:
 1. Process as normal:  read all content of files and write to destination
    - Pros: simple, easy to implement
    - Cons: if the file is too large, it can cause memory error
-2. Make a streaming pipelines by chunking single file into small pieces
-   - Pros: can handle large file by saving memory usage.
+2. Make a streaming pipeline by chunking single file into small pieces
+   - Pros: can handle large files by saving memory usage.
    - Cons: complex, exception handling , IO pressure.
