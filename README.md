@@ -6,10 +6,12 @@ Vu's assignment to build data pipeline to extract data from SFTP servers, transf
 
 ## Deployment 
 
+**Need locate on repo path before run all below commands**
+
 ### 1. Gen SSH key
 Because I deploy SFTP server on docker, so I need to generate SSH key 
 avoid MITM warning when recreate container (and the host keys changes)
-so must own the private key and public key
+so must own the private key and public key. **Note**: create with empty passphrase for the key
 ```bash
 ssh-keygen -t ed25519 -f ssh_host_ed25519_key < /dev/null
 ssh-keygen -t rsa -b 4096 -f ssh_host_rsa_key < /dev/null
@@ -28,11 +30,11 @@ I have 2 SFTP servers, one for source and one for destination
 
 Steps:
 - Go to Airflow UI at http://localhost:8080 with username and password is `airflow`
-- Turn and trigger on the `Sftp_sync` dag
+- Turn and trigger on the `sftp_sync` dag
 - Connect and put file to source SFTP server:
   -  Run `sftp -oPort=2222 source@localhost` with password is `src`
   - Cd to `upload` folder and put file 1.txt in my repo to this folder by `put 1.txt` command
-- Check the destination SFTP  server (`sftp - oPort=2222 destination@localhost` go to dir `donwload`) to see the file is copied to this server 
+- Check the destination SFTP  server (`sftp -oPort=2222 destination@localhost` with password is `dst`,  go to dir `donwload`) to see the file is copied to this server 
 (I schedule to run every 3 minutes so you need to wait a little bit)
 
 **Note:** Connection source and dest SFTP have been created when deploy docker-compose
@@ -43,18 +45,14 @@ Steps:
 ![img_2.png](img_2.png)
 
 This design is simple, I have 3 tasks: 
-1. Detect all new files or modified files in the source
-by using modify time of file and compare with the last modified file time in last run
-, state can be stored in a database. If any file has modify time greater than the last modified time, it will be considered as a new file.
-2. ETL data
+1. Detect all new files or modified files in the source by state management
+2. Execute ETL workflow
 3. Update the last modified time in the database as state, use this state in the next run
 
-So it has the advantage that it just processes new files or modified files, so it can save time and resources.
-But it requires more complex to handle the incremental modify time, manage state properly.  
-
+It has advantages is idempotent, but it required to manage state properly.
 
 ### 3. The abstraction
-Source or Destination not only SFTP server, it can be any storage file  like GCS, AWS S3, etc. So I have 2 abstract classes `Source` and `Destination` to define the interface for the source and destination. 
+Source or Destination not only SFTP server, it can be any storage file  like GCS, AWS S3, etc. So I have to define the interface for the source and destination. 
 ```python
 class Source:
   def get_files(self, path):
@@ -69,23 +67,18 @@ class Source:
   def get_new_files(self, path):
     ...
 
-  def mark_file_processed(self, file_path):
-    ...
 ```
-It can be implemented for any storage file by override these methods, so I can easily change the source or destination in the future
-
 
 ### 4. Easily custom transform
-Custom transform is needed in pipline, so I have defined the interface for the transform, so I can easily change the transform in the future
+Custom transform is needed in pipline, so I have defined the interface for the transformation  whereas its implementations can be interchangeable
 
-Trade-off: I assume that the transform just transform data inside the file, so can't  transform by  joining data from multiple files
+Trade-off: I assume that there is no needed for joining transformation (i.e aggregation between data entities) as SFTP servers usually offer unstructured data, so only on-the-fly transformation is supported
 
-
-### 5. Handle anomalies file size
-I have two option to pipe data from source to destination:
-1. Read all content of file and write to destination
+### 5. Handle abnormal file size
+I have two option to process data from source to destination:
+1. Process as normal:  read all content of file and write to destination
    - Pros: simple, easy to implement
    - Cons: if the file is too large, it can cause memory error
-2. Make a streaming for reading and writing file. I chunk the file into small pieces and pipe them to.
+2. Make a streaming for reading and writing file. I chunk the file into small pieces
    - Pros: can handle large file
-   - Cons: complex, need to handle the case when the file is not closed properly, IO pressure.
+   - Cons: complex, exception handling , IO pressure.
